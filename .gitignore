@@ -1,0 +1,36 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.so
+
+# GenomePipe project data
+projects/
+databases/
+
+# Downloaded archives
+*.zip
+*.tar
+*.gz
+
+# Genome / sequencing data
+*.fna
+*.faa
+*.fa
+*.fasta
+*.fastq
+*.fq
+*.gff
+*.gbff
+*.gbk
+*.sam
+*.bam
+
+# Logs
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
