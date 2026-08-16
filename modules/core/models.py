@@ -10,10 +10,15 @@ class ProjectContext:
     project_name: str
     project_root: Path
     organism: str
+    data_mode: str
     config_path: Path
     input_root: Path
     output_root: Path
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.data_mode not in {"existing", "download"}:
+            raise ValueError(f"Invalid data_mode: {self.data_mode}")
 
 
 @dataclass(frozen=True)
