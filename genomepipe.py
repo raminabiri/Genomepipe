@@ -29,6 +29,7 @@ def main() -> None:
 
     print(f"\nCurrent project: {context.project_name}")
     print(f"Organism: {context.organism}")
+    print(f"Data mode: {context.data_mode}")
     print(f"Project path: {context.project_root}")
     print(f"Input root: {context.input_root}")
     print(f"Output root: {context.output_root}")
