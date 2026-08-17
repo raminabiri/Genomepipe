@@ -3,7 +3,7 @@ from pathlib import Path
 
 from .input_manager import GenomeInput
 
-VALID_BASES = set("ACGTN")
+VALID_BASES = set("ACGTNRYSWKMBDHV")
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,8 @@ def validate_fasta_integrity(genome: GenomeInput) -> FastaIntegrityResult:
 
     if sequence_count == 0:
         errors.append("No FASTA records found")
+    if total_bases == 0:
+        errors.append("No sequence bases found")
     if invalid_bases:
         errors.append(f"Found {invalid_bases} invalid nucleotide characters")
 
