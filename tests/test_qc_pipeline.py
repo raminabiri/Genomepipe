@@ -1,34 +1,43 @@
-"""Tests for Phase 2.6 QC pipeline integration."""
+from pathlib import Path
 
 from modules.core.qc_pipeline import QCPipeline
+from modules.qc.input_manager import GenomeInput
 
 
-class MockStandardizer:
-    def normalize(self, value):
-        return "STD_" + value
+def test_qc_pipeline_processes_local_fasta(tmp_path: Path):
+    fasta = tmp_path / "Genome 01.fasta"
+    fasta.write_text(">contig1\nACGTACGT\n>contig2\nGGCC\n", encoding="utf-8")
+
+    result = QCPipeline().process_genome(GenomeInput(fasta, fasta.stem))
+
+    assert result.genome_id == "Genome_01"
+    assert result.status == "PASS"
+    assert result.qc_record is not None
+    assert result.qc_record.sequence_count == 2
+    assert result.qc_record.total_bases == 12
+    assert result.qc_record.n50 == 8
+    assert result.quality_assessment is not None
+    assert result.quality_assessment.quality_label == "PENDING"
+    assert result.checksum_sha256 is not None
 
 
-class MockQC:
-    pass
+def test_qc_pipeline_rejects_invalid_fasta(tmp_path: Path):
+    fasta = tmp_path / "bad.fasta"
+    fasta.write_text(">contig1\nACGTX\n", encoding="utf-8")
+
+    result = QCPipeline().process_genome(GenomeInput(fasta, fasta.stem))
+
+    assert result.status == "FAIL"
+    assert result.qc_record is not None
+    assert result.qc_record.invalid_bases == 1
+    assert result.qc_record.errors
 
 
-class MockProvenance:
-    pass
+def test_qc_pipeline_discovers_local_genomes(tmp_path: Path):
+    (tmp_path / "a.fna").write_text(">a\nACGT\n", encoding="utf-8")
+    (tmp_path / "b.fasta").write_text(">b\nGGCC\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("not a genome", encoding="utf-8")
 
+    genomes = QCPipeline(tmp_path).discover()
 
-def test_qc_pipeline_connects_modules():
-    pipeline = QCPipeline(
-        qc_module=MockQC(),
-        standardizer=MockStandardizer(),
-        provenance=MockProvenance(),
-    )
-
-    result = pipeline.run("genome_001")
-
-    assert result.genome_id == "STD_genome_001"
-    assert result.status == "READY_FOR_VALIDATION"
-    assert result.steps == [
-        "standardization",
-        "qc_assessment",
-        "provenance_record",
-    ]
+    assert [genome.genome_id for genome in genomes] == ["a", "b"]
