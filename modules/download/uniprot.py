@@ -1,11 +1,8 @@
-"""UniProt protein-sequence data-source adapter.
-
-UniProt is a protein database, not an assembly repository. It is therefore
-kept as a complementary source and is not mapped to assembly-level choices.
-"""
+"""UniProt protein-sequence retrieval adapter."""
 
 from pathlib import Path
 from urllib.parse import quote
+from urllib.request import urlopen
 
 
 class UniProt:
@@ -32,4 +29,8 @@ class UniProt:
     def download(self, execute=False):
         if not execute:
             return self.plan()
-        raise NotImplementedError("UniProt execution is enabled only through the pipeline runner.")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        out = self.output_dir / "uniprot_proteins.fasta"
+        with urlopen(self.build_search_url(), timeout=300) as response:
+            out.write_bytes(response.read())
+        return out
