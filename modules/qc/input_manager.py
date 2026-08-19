@@ -33,7 +33,7 @@ class GenomeInputManager:
         for genome in genomes:
             if not genome.path.is_file():
                 errors.append(f"Missing genome file: {genome.path}")
-            if genome.path.stat().st_size == 0:
+            elif genome.path.stat().st_size == 0:
                 errors.append(f"Empty genome file: {genome.path}")
             if genome.genome_id in seen:
                 errors.append(f"Duplicate genome ID: {genome.genome_id}")
