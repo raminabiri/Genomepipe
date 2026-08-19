@@ -1,11 +1,11 @@
 """NCBI SRA read-data adapter.
 
-SRA provides sequencing reads rather than assembled genome records. It is kept
-in the download layer as a complementary source and is intentionally not
-subject to the six assembly-level options.
+SRA stores raw sequencing reads rather than genome assemblies. Execution uses
+SRA Toolkit and therefore requires run/BioProject accessions.
 """
 
 from pathlib import Path
+import subprocess
 
 
 class SRA:
@@ -23,10 +23,28 @@ class SRA:
             "output_dir": str(self.output_dir),
             "execute": False,
             "data_type": "raw_reads",
-            "note": "SRA is a read archive, not an assembly database.",
+            "note": "SRA execution requires run or BioProject accessions; it is not an assembly download.",
         }
 
-    def download(self, execute=False):
+    def download(self, execute=False, accessions=None):
         if not execute:
             return self.plan()
-        raise NotImplementedError("SRA execution is enabled only through the pipeline runner.")
+        if not accessions:
+            raise ValueError("SRA execution requires one or more run/BioProject accessions.")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        results = []
+        for accession in accessions:
+            prefetch = subprocess.run(
+                ["prefetch", str(accession), "--output-directory", str(self.output_dir)],
+                text=True,
+            )
+            if prefetch.returncode != 0:
+                raise RuntimeError(f"prefetch failed for {accession}")
+            fasterq = subprocess.run(
+                ["fasterq-dump", str(accession), "--outdir", str(self.output_dir)],
+                text=True,
+            )
+            if fasterq.returncode != 0:
+                raise RuntimeError(f"fasterq-dump failed for {accession}")
+            results.append(accession)
+        return results
