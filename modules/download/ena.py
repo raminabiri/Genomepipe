@@ -25,9 +25,15 @@ class ENA:
         return {
             "source": self.source,
             "search_url": self.build_search_url(),
+            "sequence_api": "https://www.ebi.ac.uk/ena/browser/api/fasta/{accession}",
             "assembly_levels": list(self.assembly_levels),
             "output_dir": str(self.output_dir),
             "execute": False,
+        }
+
+    def _allowed(self, level):
+        return not self.assembly_levels or level.strip().lower() in {
+            x.lower().replace("_", " ") for x in self.assembly_levels
         }
 
     def download(self, execute=False):
@@ -37,4 +43,22 @@ class ENA:
         metadata = self.output_dir / "ena_assemblies.tsv"
         with urlopen(self.build_search_url(), timeout=300) as response:
             metadata.write_bytes(response.read())
-        return metadata
+
+        rows = metadata.read_text(encoding="utf-8").splitlines()
+        if not rows:
+            return []
+        header = rows[0].split("\t")
+        acc_i = header.index("assembly_accession")
+        level_i = header.index("assembly_level")
+        outputs = []
+        for row in rows[1:]:
+            fields = row.split("\t")
+            if len(fields) <= max(acc_i, level_i) or not self._allowed(fields[level_i]):
+                continue
+            accession = fields[acc_i]
+            out = self.output_dir / f"{accession}.fna"
+            url = f"https://www.ebi.ac.uk/ena/browser/api/fasta/{accession}"
+            with urlopen(url, timeout=300) as response:
+                out.write_bytes(response.read())
+            outputs.append(out)
+        return outputs
