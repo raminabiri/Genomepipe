@@ -27,10 +27,11 @@ class QCPipelineResult:
     qc_record: GenomeQCRecord | None = None
     quality_assessment: QualityAssessment | None = None
     checksum_sha256: str | None = None
+    validation_errors: tuple[str, ...] = ()
 
 
 class QCPipeline:
-    """Coordinate local genome discovery, standardization, QC and provenance."""
+    """Coordinate local genome discovery, validation, standardization and QC."""
 
     VERSION = "2.6.0"
 
@@ -43,8 +44,18 @@ class QCPipeline:
         return GenomeInputManager(self.genome_root).discover()
 
     def process_genome(self, genome: GenomeInput) -> QCPipelineResult:
-        steps: list[str] = ["input_discovery"]
+        manager = GenomeInputManager(genome.path.parent)
+        validation_errors = manager.validate((genome,))
+        if validation_errors:
+            return QCPipelineResult(
+                genome_id=genome.genome_id,
+                status="FAIL",
+                steps=("input_validation",),
+                metadata={"input_path": str(genome.path)},
+                validation_errors=validation_errors,
+            )
 
+        steps: list[str] = ["input_validation"]
         normalized = normalize_genome_id(genome.genome_id)
         steps.append("standardization")
 
@@ -81,7 +92,7 @@ class QCPipeline:
         return tuple(self.process_genome(genome) for genome in inputs)
 
     def write_provenance(self, result: QCPipelineResult, output_dir: Path) -> Path:
-        """Write a machine-readable provenance record for one QC result."""
+        """Write a machine-readable provenance record for one successful QC result."""
         if result.qc_record is None or result.checksum_sha256 is None:
             raise ValueError("QC result is incomplete; provenance cannot be written")
         record = create_provenance_record(
@@ -111,6 +122,7 @@ class QCPipeline:
             ])
             for result in results:
                 qc = result.qc_record
+                errors = result.validation_errors or (qc.errors if qc else ())
                 writer.writerow([
                     result.genome_id,
                     result.status,
@@ -120,6 +132,6 @@ class QCPipeline:
                     f"{qc.gc_percent:.4f}" if qc else "",
                     result.quality_assessment.quality_label if result.quality_assessment else "",
                     result.checksum_sha256 or "",
-                    " | ".join(qc.errors) if qc else "",
+                    " | ".join(errors),
                 ])
         return output
