@@ -32,7 +32,11 @@ def main():
 
     print(f"Project path: {project_path}")
 
-    run(project_path)
-    extract_run(project_path)
+    dry_run = run(project_path)
+
+    if not dry_run:
+        extract_run(project_path)
+    else:
+        print("\n*** DRY RUN: extraction skipped ***")
 if __name__ == "__main__":
     main()
