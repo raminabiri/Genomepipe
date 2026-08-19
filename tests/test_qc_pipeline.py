@@ -41,3 +41,17 @@ def test_qc_pipeline_discovers_local_genomes(tmp_path: Path):
     genomes = QCPipeline(tmp_path).discover()
 
     assert [genome.genome_id for genome in genomes] == ["a", "b"]
+
+
+def test_qc_pipeline_writes_provenance(tmp_path: Path):
+    fasta = tmp_path / "genome.fasta"
+    fasta.write_text(">contig1\nACGTACGT\n", encoding="utf-8")
+
+    pipeline = QCPipeline()
+    result = pipeline.process_genome(GenomeInput(fasta, fasta.stem))
+    provenance = pipeline.write_provenance(result, tmp_path / "provenance")
+
+    assert provenance.exists()
+    text = provenance.read_text(encoding="utf-8")
+    assert '"stage": "phase_2.6_qc"' in text
+    assert result.checksum_sha256 in text
