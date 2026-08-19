@@ -1,11 +1,11 @@
-"""Top-level download dispatcher.
+"""Top-level multi-database download dispatcher.
 
-The dispatcher builds source-specific plans and only performs network I/O when
-``execute=True``. Running this module without explicit execution therefore
-cannot start a download accidentally.
+Network I/O is disabled until the caller explicitly sets ``execute=True`` and
+confirms execution in the interactive runner.
 """
 
 from pathlib import Path
+import yaml
 
 from .config import DATABASES, ASSEMBLY_CHOICES
 from .ncbi import NCBI
@@ -28,81 +28,74 @@ def _choose_sources():
     raw = input("Select database numbers (comma-separated): ").strip()
     selected = []
     for token in raw.split(","):
-        token = token.strip()
-        if not token:
-            continue
-        index = int(token)
-        if not 1 <= index <= len(DATABASES):
-            raise ValueError(f"Invalid database selection: {index}")
-        selected.append(DATABASES[index - 1])
+        if token.strip():
+            index = int(token.strip())
+            if not 1 <= index <= len(DATABASES):
+                raise ValueError(f"Invalid database selection: {index}")
+            selected.append(DATABASES[index - 1])
+    if not selected:
+        raise ValueError("At least one database must be selected")
     return list(dict.fromkeys(selected))
 
 
 def _choose_assembly():
+    labels = {
+        "1": "Complete genome",
+        "2": "Chromosome",
+        "3": "Scaffold",
+        "4": "Contig",
+        "5": "Complete genome + Chromosome",
+        "6": "Complete genome + Chromosome + Scaffold",
+    }
     print("\nAssembly set:")
-    print("1. Complete genome")
-    print("2. Chromosome")
-    print("3. Scaffold")
-    print("4. Contig")
-    print("5. Complete genome + Chromosome")
-    print("6. Complete genome + Chromosome + Scaffold")
+    for key, label in labels.items():
+        print(f"{key}. {label}")
     choice = input("Choice: ").strip()
     if choice not in ASSEMBLY_CHOICES:
         raise ValueError(f"Invalid assembly choice: {choice}")
     return choice, ASSEMBLY_CHOICES[choice]
 
 
+def _provider(source, organism, output_dir, assembly_levels):
+    root = Path(output_dir) / source
+    if source == "ncbi":
+        return NCBI(organism, root, assembly_levels)
+    if source == "ena":
+        return ENA(organism, root, assembly_levels)
+    if source == "gtdb":
+        return GTDB(organism, root, assembly_levels)
+    if source == "bvbrc":
+        return BVBRC(organism, root, assembly_levels)
+    if source == "ddbj":
+        return DDBJ(organism, root, assembly_levels)
+    if source == "img":
+        return IMG(organism, root, assembly_levels)
+    if source == "sra":
+        return SRA(organism, root)
+    if source == "uniprot":
+        return UniProt(organism, root)
+    raise ValueError(f"Unsupported source: {source}")
+
+
 def build_plans(organism, output_dir, sources=None, assembly_choice=None):
-    """Build download plans without performing network I/O."""
-    output_dir = Path(output_dir)
-    if sources is None:
-        sources = list(DATABASES)
-
-    assembly_levels = ASSEMBLY_CHOICES[assembly_choice] if assembly_choice else ()
-    plans = []
-
-    for source in sources:
-        if source == "ncbi":
-            provider = NCBI(organism, output_dir / source, assembly_levels)
-        elif source == "ena":
-            provider = ENA(organism, output_dir / source, assembly_levels)
-        elif source == "gtdb":
-            provider = GTDB(organism, output_dir / source, assembly_levels)
-        elif source == "bvbrc":
-            provider = BVBRC(organism, output_dir / source, assembly_levels)
-        elif source == "ddbj":
-            provider = DDBJ(organism, output_dir / source, assembly_levels)
-        elif source == "img":
-            provider = IMG(organism, output_dir / source, assembly_levels)
-        elif source == "sra":
-            provider = SRA(organism, output_dir / source)
-        elif source == "uniprot":
-            provider = UniProt(organism, output_dir / source)
-        else:
-            raise ValueError(f"Unsupported source: {source}")
-        plans.append(provider.plan())
-
-    return plans
+    """Build provider plans without performing network I/O."""
+    sources = list(DATABASES if sources is None else sources)
+    levels = ASSEMBLY_CHOICES[assembly_choice] if assembly_choice else ()
+    return [
+        _provider(source, organism, output_dir, levels).plan()
+        for source in sources
+    ]
 
 
 def run(project_path, execute=None):
-    """Interactive dispatcher.
-
-    If ``execute`` is None, the user is explicitly asked before any network
-    operation. This keeps code preparation and actual downloading separate.
-    """
     project_path = Path(project_path)
-    config_path = project_path / "config" / "project.yaml"
-
-    import yaml
-    with config_path.open("r", encoding="utf-8") as handle:
+    with (project_path / "config" / "project.yaml").open("r", encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
 
     organism = config["project"]["organism"]
     output_dir = config["input"]["genomes"]
 
-    use_existing = input("Use existing genomes? (y/n): ").strip().lower()
-    if use_existing == "y":
+    if input("Use existing genomes? (y/n): ").strip().lower() == "y":
         return {"status": "existing_input", "plans": []}
 
     sources = _choose_sources()
@@ -114,21 +107,12 @@ def run(project_path, execute=None):
 
     if execute is None:
         execute = input("Execute downloads now? (y/n): ").strip().lower() == "y"
-
     if not execute:
         return {"status": "plan_only", "plans": plans}
 
     results = []
-    for plan in plans:
-        source = plan["source"]
-        if source == "ncbi":
-            provider = NCBI(organism, Path(output_dir) / source,
-                            tuple(plan["assembly_levels"]))
-        else:
-            # Non-NCBI providers are deliberately gated until their provider-
-            # specific execution implementation is enabled.
-            results.append({"source": source, "status": "plan_only", "plan": plan})
-            continue
+    for source in sources:
+        provider = _provider(source, organism, output_dir,
+                             ASSEMBLY_CHOICES[assembly_choice] if assembly_choice else ())
         results.append({"source": source, "result": provider.download(execute=True)})
-
     return {"status": "executed", "results": results, "plans": plans}
