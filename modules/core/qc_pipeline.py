@@ -1,50 +1,81 @@
-"""
-Genomepipe Phase 2.6
-QC Pipeline Integration
+"""Genomepipe Phase 2.6 - QC pipeline integration.
 
-Connects QC, standardization and provenance layers.
-No real genome execution is performed here.
+This module orchestrates the local-genome QC path only. It deliberately has no
+network/download dependency and never invokes a database downloader.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from modules.qc.checksums import sha256_file
+from modules.qc.input_manager import GenomeInput, GenomeInputManager
+from modules.qc.qc_report import GenomeQCRecord, qc_genome
+from modules.qc.quality_assessment import QualityAssessment, assess_quality
+from modules.standardization.normalizer import normalize_genome_id
 
 
-@dataclass
+@dataclass(frozen=True)
 class QCPipelineResult:
     genome_id: str
     status: str
-    steps: list = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    steps: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+    qc_record: GenomeQCRecord | None = None
+    quality_assessment: QualityAssessment | None = None
+    checksum_sha256: str | None = None
 
 
 class QCPipeline:
-    """Workflow coordinator for genome QC preparation."""
+    """Coordinate local genome discovery, standardization, QC and provenance data.
 
-    def __init__(self, qc_module=None, standardizer=None, provenance=None):
-        self.qc_module = qc_module
-        self.standardizer = standardizer
-        self.provenance = provenance
+    The class is intentionally dependency-light. It can operate on one existing
+    FASTA file or on a local genome directory and does not download data.
+    """
 
-    def run(self, genome_input: str) -> QCPipelineResult:
-        steps = []
+    def __init__(self, genome_root: Path | None = None):
+        self.genome_root = Path(genome_root) if genome_root is not None else None
 
-        genome_id = genome_input
+    def discover(self) -> tuple[GenomeInput, ...]:
+        if self.genome_root is None:
+            return ()
+        return GenomeInputManager(self.genome_root).discover()
 
-        if self.standardizer:
-            genome_id = self.standardizer.normalize(genome_input)
-            steps.append("standardization")
+    def process_genome(self, genome: GenomeInput) -> QCPipelineResult:
+        steps: list[str] = ["input_discovery"]
 
-        if self.qc_module:
-            steps.append("qc_assessment")
+        normalized = normalize_genome_id(genome.genome_id)
+        steps.append("standardization")
 
-        if self.provenance:
-            steps.append("provenance_record")
+        standardized = GenomeInput(path=genome.path, genome_id=normalized.normalized)
+        qc_record = qc_genome(standardized)
+        steps.append("qc_assessment")
 
+        checksum = sha256_file(standardized.path)
+        steps.append("checksum")
+
+        # Completeness/contamination require later external QC tools. Until
+        # those metrics are supplied, the quality assessment remains PENDING.
+        quality = assess_quality(standardized.genome_id)
+        steps.append("quality_assessment")
+
+        status = "PASS" if qc_record.status == "PASS" else "FAIL"
         return QCPipelineResult(
-            genome_id=genome_id,
-            status="READY_FOR_VALIDATION",
-            steps=steps,
-            metadata={"created_at": datetime.utcnow().isoformat()}
+            genome_id=standardized.genome_id,
+            status=status,
+            steps=tuple(steps),
+            metadata={
+                "input_path": str(standardized.path),
+                "original_genome_id": normalized.original,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            qc_record=qc_record,
+            quality_assessment=quality,
+            checksum_sha256=checksum,
         )
+
+    def run(self, genomes: tuple[GenomeInput, ...] | None = None) -> tuple[QCPipelineResult, ...]:
+        """Run the integrated QC path over already-available local genomes."""
+        inputs = genomes if genomes is not None else self.discover()
+        return tuple(self.process_genome(genome) for genome in inputs)
